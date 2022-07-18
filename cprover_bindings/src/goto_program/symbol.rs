@@ -72,6 +72,13 @@ impl Symbol {
         let name = name.into();
         let base_name = base_name.intern();
         let pretty_name = pretty_name.intern();
+        // See https://github.com/model-checking/kani/issues/1361#issuecomment-1181499683
+        assert!(
+            name.to_string().ends_with(&base_name.map_or(String::new(), |s| s.to_string())),
+            "Symbol's base_name must be the suffix of its name.\nName: {:?}\nBase name: {:?}",
+            name,
+            base_name
+        );
         Symbol {
             name,
             location,
@@ -105,13 +112,20 @@ impl Symbol {
 
     /// The symbol that defines the type of the struct or union.
     /// For a struct foo this is the symbol "tag-foo" that maps to the type struct foo.
-    pub fn aggr_ty<T: Into<InternedString>>(t: Type, pretty_name: Option<T>) -> Symbol {
+    pub fn aggr_ty<T: Into<InternedString>>(t: Type, pretty_name: T) -> Symbol {
         //TODO take location
-        let pretty_name = pretty_name.intern();
+        let pretty_name = pretty_name.into();
         let base_name = t.tag().unwrap();
         let name = aggr_tag(base_name);
-        Symbol::new(name, Location::none(), t, SymbolValues::None, Some(base_name), pretty_name)
-            .with_is_type(true)
+        Symbol::new(
+            name,
+            Location::none(),
+            t,
+            SymbolValues::None,
+            Some(base_name),
+            Some(pretty_name),
+        )
+        .with_is_type(true)
     }
 
     pub fn builtin_function<T: Into<InternedString>>(
@@ -124,7 +138,7 @@ impl Symbol {
             name,
             Type::code_with_unnamed_parameters(param_types, return_type),
             None,
-            None::<InternedString>,
+            name,
             Location::builtin_function(name, None),
         )
     }
@@ -174,18 +188,18 @@ impl Symbol {
         name: T,
         typ: Type,
         body: Option<Stmt>,
-        pretty_name: Option<U>,
+        pretty_name: U,
         loc: Location,
     ) -> Symbol {
         let name = name.into();
-        let pretty_name = pretty_name.intern();
+        let pretty_name = pretty_name.into();
         Symbol::new(
             name.to_string(),
             loc,
             typ,
             body.map_or(SymbolValues::None, SymbolValues::Stmt),
             Some(name),
-            pretty_name,
+            Some(pretty_name),
         )
         .with_is_lvalue(true)
     }
@@ -233,7 +247,7 @@ impl Symbol {
 
     pub fn struct_type<T: Into<InternedString>>(
         name: T,
-        pretty_name: Option<InternedString>,
+        pretty_name: InternedString,
         components: Vec<DatatypeComponent>,
     ) -> Symbol {
         let name = name.into();
@@ -242,35 +256,35 @@ impl Symbol {
 
     pub fn union_type<T: Into<InternedString>, U: Into<InternedString>>(
         name: T,
-        pretty_name: Option<U>,
+        pretty_name: U,
         components: Vec<DatatypeComponent>,
     ) -> Symbol {
         let name = name.into();
-        let pretty_name = pretty_name.intern();
+        let pretty_name = pretty_name.into();
         Symbol::aggr_ty(Type::union_type(name, components), pretty_name)
     }
 
-    pub fn empty_struct(name: InternedString, pretty_name: Option<InternedString>) -> Symbol {
+    pub fn empty_struct(name: InternedString, pretty_name: InternedString) -> Symbol {
         Symbol::aggr_ty(Type::empty_struct(name), pretty_name)
     }
 
-    pub fn empty_union(name: InternedString, pretty_name: Option<InternedString>) -> Symbol {
+    pub fn empty_union(name: InternedString, pretty_name: InternedString) -> Symbol {
         Symbol::aggr_ty(Type::empty_union(name), pretty_name)
     }
 
     pub fn incomplete_struct<T: Into<InternedString>, U: Into<InternedString>>(
         name: T,
-        pretty_name: Option<U>,
+        pretty_name: U,
     ) -> Symbol {
         Symbol::aggr_ty(Type::incomplete_struct(name), pretty_name)
     }
 
     pub fn incomplete_union<T: Into<InternedString>, U: Into<InternedString>>(
         name: T,
-        pretty_name: Option<U>,
+        pretty_name: U,
     ) -> Symbol {
         let name = name.into();
-        let pretty_name = pretty_name.intern();
+        let pretty_name = pretty_name.into();
         Symbol::aggr_ty(Type::incomplete_union(name), pretty_name)
     }
 }
