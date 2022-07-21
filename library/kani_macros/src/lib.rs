@@ -73,26 +73,3 @@ pub fn unwind(attr: TokenStream, item: TokenStream) -> TokenStream {
     result.extend(item);
     result
 }
-
-#[cfg(not(kani))]
-#[proc_macro_attribute]
-pub fn ensures(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    // When the config is not kani, we should leave the function alone
-    item
-}
-
-/// Set postcondition of a function using a function contract
-/// The attribute '#[kani::ensures(arg)]' can only be called alongside '#[kani::proof]'.
-/// arg - Takes in a boolean expression that represents the postcondition.
-#[cfg(kani)]
-#[proc_macro_attribute]
-pub fn ensures(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let mut result = TokenStream::new();
-
-    // Translate #[kani::ensures(arg)] to #[kanitool::ensures(arg)]
-    let insert_string = "#[kanitool::ensures(".to_owned() + &attr.clone().to_string() + ")]";
-    result.extend(insert_string.parse::<TokenStream>().unwrap());
-
-    result.extend(item);
-    result
-}
