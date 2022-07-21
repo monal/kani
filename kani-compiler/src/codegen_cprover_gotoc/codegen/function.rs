@@ -297,6 +297,7 @@ impl<'tcx> GotocCtx<'tcx> {
         for attr in other_attributes.iter() {
             match attr.0.as_str() {
                 "unwind" => self.handle_kanitool_unwind(attr.1, &mut harness),
+                "ensures" => self.handle_kanitool_ensures(attr.1, &mut harness),
                 _ => {
                     self.tcx.sess.span_err(
                         attr.1.span,
@@ -322,6 +323,10 @@ impl<'tcx> GotocCtx<'tcx> {
             original_line: loc.line().unwrap().to_string(),
             unwind_value: None,
         }
+    }
+
+    fn handle_kanitool_ensures(&mut self, _attr: &Attribute, _harness: &mut HarnessMetadata) {
+        todo!();
     }
 
     /// Updates the proof harness with new unwind value

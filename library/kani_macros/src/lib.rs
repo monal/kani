@@ -10,10 +10,10 @@
 
 // proc_macro::quote is nightly-only, so we'll cobble things together instead
 use proc_macro::TokenStream;
+use quote::quote;
 use syn::parse_quote_spanned;
 use syn::spanned::Spanned;
 use uuid::Uuid;
-use quote::quote;
 
 #[cfg(all(not(kani), not(test)))]
 #[proc_macro_attribute]
@@ -123,7 +123,7 @@ pub fn ensures(attr: TokenStream, item: TokenStream) -> TokenStream {
     spec_item.sig.inputs.push(fn_arg);
     let spec_item_tokens = TokenStream::from(quote!(#spec_item));
     result.extend(spec_item_tokens);
-    
+
     // Translate #[kani::ensures(arg)] to #[kanitool::ensures(arg)]
     let insert_string = "#[kanitool::ensures(".to_owned() + &spec_fn_name.to_string() + ")]";
     result.extend(insert_string.parse::<TokenStream>().unwrap());
