@@ -10,6 +10,7 @@ use cbmc::InternString;
 use kani_metadata::HarnessMetadata;
 use rustc_ast::ast;
 use rustc_ast::{Attribute, LitKind};
+use rustc_middle::mir::mono::{CodegenUnit, MonoItem};
 use rustc_middle::mir::{HasLocalDecls, Local};
 use rustc_middle::ty::print::with_no_trimmed_paths;
 use rustc_middle::ty::{self, Instance};
@@ -294,10 +295,13 @@ impl<'tcx> GotocCtx<'tcx> {
     /// Create the proof harness struct using the handler methods for various attributes
     fn create_proof_harness(&mut self, other_attributes: Vec<(String, &Attribute)>) {
         let mut harness = self.default_kanitool_proof();
+        let mut ensures_clauses: Vec<&Attribute> = vec![];
         for attr in other_attributes.iter() {
             match attr.0.as_str() {
                 "unwind" => self.handle_kanitool_unwind(attr.1, &mut harness),
-                "ensures" => self.handle_kanitool_ensures(attr.1, &mut harness),
+                "ensures" => {
+                    self.handle_kanitool_ensures(attr.1, &mut harness, &mut ensures_clauses)
+                }
                 _ => {
                     self.tcx.sess.span_err(
                         attr.1.span,
@@ -306,6 +310,7 @@ impl<'tcx> GotocCtx<'tcx> {
                 }
             }
         }
+        self.create_ensures_clause(ensures_clauses);
         self.proof_harnesses.push(harness);
     }
 
@@ -325,8 +330,44 @@ impl<'tcx> GotocCtx<'tcx> {
         }
     }
 
-    fn handle_kanitool_ensures(&mut self, _attr: &Attribute, _harness: &mut HarnessMetadata) {
-        todo!();
+    fn create_ensures_clause(&mut self, ensures_clauses: Vec<&Attribute>) {
+        for clause in ensures_clauses.iter() {
+            let spec_fn_name = clause
+                .meta()
+                .expect("value always set")
+                .value_str()
+                .expect("value always set")
+                .to_string();
+            let codegen_units: &'tcx [CodegenUnit<'_>] =
+                self.tcx.collect_and_partition_mono_items(()).1;
+            for cgu in codegen_units {
+                let items = cgu.items_in_deterministic_order(self.tcx);
+                for (item, _) in items {
+                    match item {
+                        MonoItem::Fn(instance) => {
+                            let item_name = item.symbol_name(self.tcx).name;
+                            if item_name == spec_fn_name {
+                                let _body = instance.def;
+                                todo!()
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            // let sym = self.tcx.lookup(&spec_fn_name);
+            todo!()
+        }
+    }
+
+    fn handle_kanitool_ensures<'a>(
+        &mut self,
+        attr: &'a Attribute,
+        _harness: &mut HarnessMetadata,
+        ensures_clauses: &mut Vec<&'a Attribute>,
+    ) {
+        // Add attribute to a vec of contract clauses.
+        ensures_clauses.push(&attr);
     }
 
     /// Updates the proof harness with new unwind value

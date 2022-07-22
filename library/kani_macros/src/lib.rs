@@ -10,10 +10,6 @@
 
 // proc_macro::quote is nightly-only, so we'll cobble things together instead
 use proc_macro::TokenStream;
-use quote::quote;
-use syn::parse_quote_spanned;
-use syn::spanned::Spanned;
-use uuid::Uuid;
 
 #[cfg(all(not(kani), not(test)))]
 #[proc_macro_attribute]
@@ -93,38 +89,28 @@ pub fn ensures(_attr: TokenStream, item: TokenStream) -> TokenStream {
 pub fn ensures(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut result = TokenStream::new();
 
-    // Convert item token stream to AST
-    let item_ast = syn::parse::<syn::ItemFn>(item.clone()).unwrap();
-    let item_span = item_ast.span();
-    let item_name = item_ast.sig.ident;
-    let attr_ast = syn::parse::<syn::Expr>(attr.clone()).unwrap();
-    let spec_span = attr_ast.span();
-    let spec_id = Uuid::new_v4();
-    let spec_fn_name =
-        syn::Ident::new(&format!("contract_{}_ensures_{}", item_name, spec_id), spec_span);
-
-    let mut spec_item: syn::ItemFn = parse_quote_spanned! {item_span =>
-        fn #item_name() -> bool {
-            !!((#attr_ast): bool)
+    // Parse item and attribute
+    let item_input = item.clone();
+    let parsed_item = syn::parse_macro_input!(item_input as syn::ItemFn);
+    let parsed_attr = syn::parse_macro_input!(attr as syn::Expr);
+    // Copy the function's identifier
+    let item_name = parsed_item.sig.ident.clone();
+    // Create a new identifier
+    let uuid = uuid::Uuid::new_v4();
+    let spec_fn_name = proc_macro2::Ident::new(
+        &format!("spec_ensures_{}_{}", item_name, uuid),
+        proc_macro2::Span::call_site(),
+    );
+    // Create a function whose body is the same as attr.
+    let mut spec_fn = quote::quote! {
+        fn #spec_fn_name( #parsed_item.sig.output, #parsed_item.sig.inputs ) -> bool {
+            #parsed_attr
         }
     };
-    spec_item.sig.generics = item_ast.sig.generics.clone();
-    spec_item.sig.inputs = item_ast.sig.inputs.clone();
-    let output_ty = match &item_ast.sig.output {
-        syn::ReturnType::Default => parse_quote_spanned!(item_span=> ()),
-        syn::ReturnType::Type(_, ty) => ty.clone(),
-    };
-    let fn_arg = syn::FnArg::Typed(syn::PatType {
-        attrs: Vec::new(),
-        pat: Box::new(parse_quote_spanned!(item_span => result)),
-        colon_token: syn::Token![:](item_ast.sig.output.span()),
-        ty: output_ty,
-    });
-    spec_item.sig.inputs.push(fn_arg);
-    let spec_item_tokens = TokenStream::from(quote!(#spec_item));
-    result.extend(spec_item_tokens);
 
-    // Translate #[kani::ensures(arg)] to #[kanitool::ensures(arg)]
+    result.extend::<TokenStream>(spec_fn.into());
+
+    // // Translate #[kani::ensures(arg)] to #[kanitool::ensures(spec_fn_name)]
     let insert_string = "#[kanitool::ensures(".to_owned() + &spec_fn_name.to_string() + ")]";
     result.extend(insert_string.parse::<TokenStream>().unwrap());
 

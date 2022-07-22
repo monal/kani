@@ -307,6 +307,7 @@ dependencies = [
 name = "kani_macros"
 version = "0.6.0"
 dependencies = [
+ "proc-macro2",
  "quote",
  "syn",
  "uuid",
