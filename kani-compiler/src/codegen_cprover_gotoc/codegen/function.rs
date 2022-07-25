@@ -5,7 +5,7 @@
 
 use crate::codegen_cprover_gotoc::codegen::PropertyClass;
 use crate::codegen_cprover_gotoc::GotocCtx;
-use cbmc::goto_program::{Expr, Stmt, Symbol};
+use cbmc::goto_program::{Contract, Expr, Location, Spec, Stmt, Symbol, Type};
 use cbmc::InternString;
 use kani_metadata::HarnessMetadata;
 use rustc_ast::ast;
@@ -295,12 +295,16 @@ impl<'tcx> GotocCtx<'tcx> {
     /// Create the proof harness struct using the handler methods for various attributes
     fn create_proof_harness(&mut self, other_attributes: Vec<(String, &Attribute)>) {
         let mut harness = self.default_kanitool_proof();
-        let mut ensures_clauses: Vec<&Attribute> = vec![];
+        let mut ensures_clauses: Vec<String> = vec![];
         for attr in other_attributes.iter() {
             match attr.0.as_str() {
                 "unwind" => self.handle_kanitool_unwind(attr.1, &mut harness),
                 "ensures" => {
-                    self.handle_kanitool_ensures(attr.1, &mut harness, &mut ensures_clauses)
+                    let spec_fn_name = self.handle_spec_argument(attr.1);
+                    match spec_fn_name {
+                        Some(fn_name) => ensures_clauses.push(fn_name),
+                        None => (),
+                    }
                 }
                 _ => {
                     self.tcx.sess.span_err(
@@ -310,7 +314,7 @@ impl<'tcx> GotocCtx<'tcx> {
                 }
             }
         }
-        self.create_ensures_clause(ensures_clauses);
+        self.create_function_contract(&mut ensures_clauses);
         self.proof_harnesses.push(harness);
     }
 
@@ -330,45 +334,88 @@ impl<'tcx> GotocCtx<'tcx> {
         }
     }
 
-    fn create_ensures_clause(&mut self, ensures_clauses: Vec<&Attribute>) {
-        for clause in ensures_clauses.iter() {
-            let spec_fn_name = clause
-                .meta()
-                .expect("value always set")
-                .value_str()
-                .expect("value always set")
-                .to_string();
-            let codegen_units: &'tcx [CodegenUnit<'_>] =
-                self.tcx.collect_and_partition_mono_items(()).1;
-            for cgu in codegen_units {
-                let items = cgu.items_in_deterministic_order(self.tcx);
-                for (item, _) in items {
-                    match item {
-                        MonoItem::Fn(instance) => {
-                            let item_name = item.symbol_name(self.tcx).name;
-                            if item_name == spec_fn_name {
-                                let _body = instance.def;
-                                todo!()
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+    /// If the attribute is named `arg`, this extracts `name`
+    fn handle_spec_argument(&mut self, attr: &ast::Attribute) -> Option<String> {
+        match &attr.kind {
+            ast::AttrKind::Normal(ast::AttrItem { path: ast::Path { segments, .. }, .. }, _) => {
+                Some(segments[0].ident.as_str().to_string())
             }
-            // let sym = self.tcx.lookup(&spec_fn_name);
-            todo!()
+            _ => None,
         }
     }
 
-    fn handle_kanitool_ensures<'a>(
-        &mut self,
-        attr: &'a Attribute,
-        _harness: &mut HarnessMetadata,
-        ensures_clauses: &mut Vec<&'a Attribute>,
-    ) {
-        // Add attribute to a vec of contract clauses.
-        ensures_clauses.push(&attr);
+    fn create_function_contract(&mut self, ensures_clauses: &mut Vec<String>) {
+        let codegen_units: &'tcx [CodegenUnit<'_>] =
+            self.tcx.collect_and_partition_mono_items(()).1;
+        let mut ensures_clauses_bodies: Vec<Spec> = vec![];
+        for cgu in codegen_units {
+            let items = cgu.items_in_deterministic_order(self.tcx);
+            for (item, _) in items {
+                match item {
+                    MonoItem::Fn(instance) => {
+                        self.set_current_fn(instance);
+                        let name = self.current_fn().name();
+                        if ensures_clauses.contains(&name) {
+                            let mir = self.current_fn().mir();
+                            let (bb, bbd) = mir.basic_blocks().iter_enumerated().nth(0).unwrap();
+                            let expr = self.codegen_contract_clause(bb, bbd);
+                            match expr {
+                                Some(e) => ensures_clauses_bodies.push(e),
+                                None => (),
+                            };
+                        }
+                        self.reset_current_fn();
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+        let contract = Contract::FunctionContract {
+            ensures: ensures_clauses_bodies.clone(),
+            requires: ensures_clauses_bodies.clone(),
+        };
+        let current_fn = self.current_fn();
+        let pretty_name = current_fn.readable_name().to_owned();
+        let typ = Type::MathematicalFunction { domain: vec![], codomain: Box::new(Type::Bool) };
+        let sym = Symbol::contract(
+            format!("contracts::{}", pretty_name),
+            pretty_name,
+            typ,
+            contract,
+            Location::none(),
+        );
+        self.symbol_table.insert(sym);
     }
+
+    // fn create_ensures_clause(&mut self, ensures_clauses: Vec<&Attribute>) {
+    //     for clause in ensures_clauses.iter() {
+    //         let spec_fn_name = clause
+    //             .meta()
+    //             .expect("value always set")
+    //             .value_str()
+    //             .expect("value always set")
+    //             .to_string();
+    //         let codegen_units: &'tcx [CodegenUnit<'_>] =
+    //             self.tcx.collect_and_partition_mono_items(()).1;
+    //         for cgu in codegen_units {
+    //             let items = cgu.items_in_deterministic_order(self.tcx);
+    //             for (item, _) in items {
+    //                 match item {
+    //                     MonoItem::Fn(instance) => {
+    //                         let item_name = item.symbol_name(self.tcx).name;
+    //                         if item_name == spec_fn_name {
+    //                             let _body = instance.def;
+    //                             todo!()
+    //                         }
+    //                     }
+    //                     _ => {}
+    //                 }
+    //             }
+    //         }
+    //         // let sym = self.tcx.lookup(&spec_fn_name);
+    //         todo!()
+    //     }
+    // }
 
     /// Updates the proof harness with new unwind value
     fn handle_kanitool_unwind(&mut self, attr: &Attribute, harness: &mut HarnessMetadata) {

@@ -89,10 +89,14 @@ pub fn ensures(_attr: TokenStream, item: TokenStream) -> TokenStream {
 pub fn ensures(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut result = TokenStream::new();
 
-    // Parse item and attribute
+    // We create a new function `foo_ensures_<uuid>(...)` for every `ensures(arg)` clause written as part of the contract
+    // on a function `foo`. The newly created function contains the AST of the boolean expression (`arg`) inside the ensures
+    // clause. The created function is added to the output TokenStream. This means that it is treated like any other function
+    // by the compiler and it gets type-checked and lowered into MIR. We parse `item` to extract out the function arguments and return value
+    // which need to be passed as arguments to the newly created clause functions.
+
     let item_input = item.clone();
     let parsed_item = syn::parse_macro_input!(item_input as syn::ItemFn);
-    let parsed_attr = syn::parse_macro_input!(attr as syn::Expr);
     // Copy the function's identifier
     let item_name = parsed_item.sig.ident.clone();
     // Create a new identifier
@@ -101,16 +105,19 @@ pub fn ensures(attr: TokenStream, item: TokenStream) -> TokenStream {
         &format!("spec_ensures_{}_{}", item_name, uuid),
         proc_macro2::Span::call_site(),
     );
+
+    let parsed_attr = syn::parse_macro_input!(attr as syn::Expr);
     // Create a function whose body is the same as attr.
     let mut spec_fn = quote::quote! {
         fn #spec_fn_name( #parsed_item.sig.output, #parsed_item.sig.inputs ) -> bool {
-            #parsed_attr
+            let body = #parsed_attr;
+            body
         }
     };
 
     result.extend::<TokenStream>(spec_fn.into());
 
-    // // Translate #[kani::ensures(arg)] to #[kanitool::ensures(spec_fn_name)]
+    // Translate #[kani::ensures(arg)] to #[kanitool::ensures(spec_fn_name)]
     let insert_string = "#[kanitool::ensures(".to_owned() + &spec_fn_name.to_string() + ")]";
     result.extend(insert_string.parse::<TokenStream>().unwrap());
 
