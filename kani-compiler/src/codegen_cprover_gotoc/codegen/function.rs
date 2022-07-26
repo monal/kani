@@ -297,6 +297,7 @@ impl<'tcx> GotocCtx<'tcx> {
     fn create_proof_harness(&mut self, other_attributes: Vec<(String, &Attribute)>) {
         let mut harness = self.default_kanitool_proof();
         let mut ensures_clauses: Vec<String> = vec![];
+        let mut requires_clauses: Vec<String> = vec![];
         for attr in other_attributes.iter() {
             match attr.0.as_str() {
                 "unwind" => self.handle_kanitool_unwind(attr.1, &mut harness),
@@ -304,6 +305,13 @@ impl<'tcx> GotocCtx<'tcx> {
                     let spec_fn_name = self.handle_spec_argument(attr.1);
                     match spec_fn_name {
                         Some(fn_name) => ensures_clauses.push(fn_name),
+                        None => (),
+                    }
+                }
+                "requires" => {
+                    let spec_fn_name = self.handle_spec_argument(attr.1);
+                    match spec_fn_name {
+                        Some(fn_name) => requires_clauses.push(fn_name),
                         None => (),
                     }
                 }
@@ -316,7 +324,7 @@ impl<'tcx> GotocCtx<'tcx> {
             }
         }
         let function_name = self.current_fn().name();
-        self.create_function_contract(&mut ensures_clauses, function_name);
+        self.create_function_contract(&mut ensures_clauses, &mut requires_clauses, function_name);
         self.proof_harnesses.push(harness);
     }
 
@@ -349,11 +357,13 @@ impl<'tcx> GotocCtx<'tcx> {
     fn create_function_contract(
         &mut self,
         ensures_clauses: &mut Vec<String>,
+        requires_clauses: &mut Vec<String>,
         function_name: String,
     ) {
         let codegen_units: &'tcx [CodegenUnit<'_>] =
             self.tcx.collect_and_partition_mono_items(()).1;
         let mut ensures_clauses_bodies: Vec<Spec> = vec![];
+        let mut requires_clauses_bodies: Vec<Spec> = vec![];
         for cgu in codegen_units {
             let items = cgu.items_in_deterministic_order(self.tcx);
             for (item, _) in items {
@@ -373,6 +383,18 @@ impl<'tcx> GotocCtx<'tcx> {
                                 None => (),
                             };
                         }
+                        if requires_clauses.contains(&name) {
+                            let mir = self.current_fn().mir();
+                            let mir_block = mir.basic_blocks().iter_enumerated().nth(0);
+                            let expr = match mir_block {
+                                Some((bb, bbd)) => self.codegen_contract_clause(bb, bbd),
+                                None => None,
+                            };
+                            match expr {
+                                Some(e) => requires_clauses_bodies.push(e),
+                                None => (),
+                            };
+                        }
                         self.reset_current_fn();
                     }
                     _ => {}
@@ -381,7 +403,7 @@ impl<'tcx> GotocCtx<'tcx> {
         }
         let contract = Contract::FunctionContract {
             ensures: ensures_clauses_bodies.clone(),
-            requires: ensures_clauses_bodies.clone(),
+            requires: requires_clauses_bodies.clone(),
         };
         let typ = Type::MathematicalFunction { domain: vec![], codomain: Box::new(Type::Bool) };
         let sym = Symbol::contract(
