@@ -296,17 +296,17 @@ impl<'tcx> GotocCtx<'tcx> {
     /// Create the proof harness struct using the handler methods for various attributes
     fn create_proof_harness(&mut self, other_attributes: Vec<(String, &Attribute)>) {
         let mut harness = self.default_kanitool_proof();
-        // let mut ensures_clauses: Vec<String> = vec![];
+        let mut ensures_clauses: Vec<String> = vec![];
         for attr in other_attributes.iter() {
             match attr.0.as_str() {
                 "unwind" => self.handle_kanitool_unwind(attr.1, &mut harness),
-                // "ensures" => {
-                //     let spec_fn_name = self.handle_spec_argument(attr.1);
-                //     match spec_fn_name {
-                //         Some(fn_name) => ensures_clauses.push(fn_name),
-                //         None => (),
-                //     }
-                // }
+                "ensures" => {
+                    let spec_fn_name = self.handle_spec_argument(attr.1);
+                    match spec_fn_name {
+                        Some(fn_name) => ensures_clauses.push(fn_name),
+                        None => (),
+                    }
+                }
                 _ => {
                     self.tcx.sess.span_err(
                         attr.1.span,
@@ -335,15 +335,15 @@ impl<'tcx> GotocCtx<'tcx> {
         }
     }
 
-    // /// If the attribute is named `arg`, this extracts `name`
-    // fn handle_spec_argument(&mut self, attr: &ast::Attribute) -> Option<String> {
-    //     match &attr.kind {
-    //         ast::AttrKind::Normal(ast::AttrItem { path: ast::Path { segments, .. }, .. }, _) => {
-    //             Some(segments[0].ident.as_str().to_string())
-    //         }
-    //         _ => None,
-    //     }
-    // }
+    /// If the attribute is named `arg`, this extracts `name`
+    fn handle_spec_argument(&mut self, attr: &ast::Attribute) -> Option<String> {
+        match &attr.kind {
+            ast::AttrKind::Normal(ast::AttrItem { path: ast::Path { segments, .. }, .. }, _) => {
+                Some(segments[0].ident.as_str().to_string())
+            }
+            _ => None,
+        }
+    }
 
     // fn create_function_contract(&mut self, ensures_clauses: &mut Vec<String>) {
     //     let codegen_units: &'tcx [CodegenUnit<'_>] =

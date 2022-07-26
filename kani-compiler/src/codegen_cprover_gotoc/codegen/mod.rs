@@ -6,7 +6,7 @@
 
 mod assert;
 mod block;
-// mod contract;
+mod contract;
 mod function;
 mod intrinsic;
 mod operand;
