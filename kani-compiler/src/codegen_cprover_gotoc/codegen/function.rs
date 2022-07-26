@@ -5,13 +5,13 @@
 
 use crate::codegen_cprover_gotoc::codegen::PropertyClass;
 use crate::codegen_cprover_gotoc::GotocCtx;
-use cbmc::goto_program::{Expr, Stmt, Symbol};
+use cbmc::goto_program::{Contract, Expr, Location, Spec, Stmt, Symbol, Type};
 // use cbmc::goto_program::{Contract, Expr, Location, Spec, Stmt, Symbol, Type};
 use cbmc::InternString;
 use kani_metadata::HarnessMetadata;
 use rustc_ast::ast;
 use rustc_ast::{Attribute, LitKind};
-// use rustc_middle::mir::mono::{CodegenUnit, MonoItem};
+use rustc_middle::mir::mono::{CodegenUnit, MonoItem};
 use rustc_middle::mir::{HasLocalDecls, Local};
 use rustc_middle::ty::print::with_no_trimmed_paths;
 use rustc_middle::ty::{self, Instance};
@@ -315,7 +315,8 @@ impl<'tcx> GotocCtx<'tcx> {
                 }
             }
         }
-        // self.create_function_contract(&mut ensures_clauses);
+        let function_name = self.current_fn().name();
+        self.create_function_contract(&mut ensures_clauses, function_name);
         self.proof_harnesses.push(harness);
     }
 
@@ -345,48 +346,53 @@ impl<'tcx> GotocCtx<'tcx> {
         }
     }
 
-    // fn create_function_contract(&mut self, ensures_clauses: &mut Vec<String>) {
-    //     let codegen_units: &'tcx [CodegenUnit<'_>] =
-    //         self.tcx.collect_and_partition_mono_items(()).1;
-    //     let mut ensures_clauses_bodies: Vec<Spec> = vec![];
-    //     for cgu in codegen_units {
-    //         let items = cgu.items_in_deterministic_order(self.tcx);
-    //         for (item, _) in items {
-    //             match item {
-    //                 MonoItem::Fn(instance) => {
-    //                     self.set_current_fn(instance);
-    //                     let name = self.current_fn().name();
-    //                     if ensures_clauses.contains(&name) {
-    //                         let mir = self.current_fn().mir();
-    //                         let (bb, bbd) = mir.basic_blocks().iter_enumerated().nth(0).unwrap();
-    //                         let expr = self.codegen_contract_clause(bb, bbd);
-    //                         match expr {
-    //                             Some(e) => ensures_clauses_bodies.push(e),
-    //                             None => (),
-    //                         };
-    //                     }
-    //                     self.reset_current_fn();
-    //                 }
-    //                 _ => unreachable!(),
-    //             }
-    //         }
-    //     }
-    //     let contract = Contract::FunctionContract {
-    //         ensures: ensures_clauses_bodies.clone(),
-    //         requires: ensures_clauses_bodies.clone(),
-    //     };
-    //     let current_fn = self.current_fn();
-    //     let pretty_name = current_fn.readable_name().to_owned();
-    //     let typ = Type::MathematicalFunction { domain: vec![], codomain: Box::new(Type::Bool) };
-    //     let sym = Symbol::contract(
-    //         format!("contracts::{}", pretty_name),
-    //         pretty_name,
-    //         typ,
-    //         contract,
-    //         Location::none(),
-    //     );
-    //     self.symbol_table.insert(sym);
-    // }
+    fn create_function_contract(
+        &mut self,
+        ensures_clauses: &mut Vec<String>,
+        function_name: String,
+    ) {
+        let codegen_units: &'tcx [CodegenUnit<'_>] =
+            self.tcx.collect_and_partition_mono_items(()).1;
+        let mut ensures_clauses_bodies: Vec<Spec> = vec![];
+        for cgu in codegen_units {
+            let items = cgu.items_in_deterministic_order(self.tcx);
+            for (item, _) in items {
+                match item {
+                    MonoItem::Fn(instance) => {
+                        self.set_current_fn(instance);
+                        let name = self.current_fn().name();
+                        if ensures_clauses.contains(&name) {
+                            let mir = self.current_fn().mir();
+                            let mir_block = mir.basic_blocks().iter_enumerated().nth(0);
+                            let expr = match mir_block {
+                                Some((bb, bbd)) => self.codegen_contract_clause(bb, bbd),
+                                None => None,
+                            };
+                            match expr {
+                                Some(e) => ensures_clauses_bodies.push(e),
+                                None => (),
+                            };
+                        }
+                        self.reset_current_fn();
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let contract = Contract::FunctionContract {
+            ensures: ensures_clauses_bodies.clone(),
+            requires: ensures_clauses_bodies.clone(),
+        };
+        let typ = Type::MathematicalFunction { domain: vec![], codomain: Box::new(Type::Bool) };
+        let sym = Symbol::contract(
+            format!("contracts::{}", function_name),
+            function_name,
+            typ,
+            contract,
+            Location::none(),
+        );
+        self.symbol_table.insert(sym);
+    }
 
     /// Updates the proof harness with new unwind value
     fn handle_kanitool_unwind(&mut self, attr: &Attribute, harness: &mut HarnessMetadata) {
