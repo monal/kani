@@ -177,6 +177,109 @@ impl<'tcx> GotocHook<'tcx> for Assert {
     }
 }
 
+struct Precondition;
+impl<'tcx> GotocHook<'tcx> for Precondition {
+    fn hook_applies(&self, tcx: TyCtxt<'tcx>, instance: Instance<'tcx>) -> bool {
+        matches_function(tcx, instance, "KaniPrecondition")
+    }
+    fn handle(
+        &self,
+        tcx: &mut GotocCtx<'tcx>,
+        _instance: Instance<'tcx>,
+        mut fargs: Vec<Expr>,
+        _assign_to: Place<'tcx>,
+        target: Option<BasicBlock>,
+        span: Option<Span>,
+    ) -> Stmt {
+        assert_eq!(fargs.len(), 2);
+        let cond = fargs.remove(0).cast_to(Type::bool());
+        let msg = fargs.remove(0);
+        let msg = utils::extract_const_message(&msg).unwrap();
+        let target = target.unwrap();
+        let caller_loc = tcx.codegen_caller_span(&span);
+
+        // TODO: switch to tagging assertions via the property class once CBMC allows that:
+        // https://github.com/diffblue/cbmc/issues/6692
+        let (msg, reach_stmt) = if tcx.queries.get_check_assertion_reachability() {
+            // Generate a unique ID for the assert
+            let assert_id = tcx.next_check_id();
+            // Add this ID as a prefix to the assert message so that it can be
+            // easily paired with the reachability check
+            let msg = GotocCtx::add_prefix_to_msg(&msg, &assert_id);
+            let reach_msg = GotocCtx::reachability_check_message(&assert_id);
+            // inject a reachability (cover) check to the current location
+            (msg, tcx.codegen_cover_loc(&reach_msg, span))
+        } else {
+            (msg, Stmt::skip(caller_loc))
+        };
+
+        // Since `cond` might have side effects, assign it to a temporary
+        // variable so that it's evaluated once, then assert and assume it
+        let tmp = tcx.gen_temp_variable(cond.typ().clone(), caller_loc).to_expr();
+        Stmt::block(
+            vec![
+                reach_stmt,
+                Stmt::decl(tmp.clone(), Some(cond), caller_loc),
+                tcx.codegen_assert(tmp.clone(), PropertyClass::Assertion, &msg, caller_loc),
+                Stmt::assume(tmp, caller_loc),
+                Stmt::goto(tcx.current_fn().find_label(&target), caller_loc),
+            ],
+            caller_loc,
+        )
+    }
+}
+struct Postcondition;
+impl<'tcx> GotocHook<'tcx> for Postcondition {
+    fn hook_applies(&self, tcx: TyCtxt<'tcx>, instance: Instance<'tcx>) -> bool {
+        matches_function(tcx, instance, "KaniPostcondition")
+    }
+    fn handle(
+        &self,
+        tcx: &mut GotocCtx<'tcx>,
+        _instance: Instance<'tcx>,
+        mut fargs: Vec<Expr>,
+        _assign_to: Place<'tcx>,
+        target: Option<BasicBlock>,
+        span: Option<Span>,
+    ) -> Stmt {
+        assert_eq!(fargs.len(), 2);
+        let cond = fargs.remove(0).cast_to(Type::bool());
+        let msg = fargs.remove(0);
+        let msg = utils::extract_const_message(&msg).unwrap();
+        let target = target.unwrap();
+        let caller_loc = tcx.codegen_caller_span(&span);
+
+        // TODO: switch to tagging assertions via the property class once CBMC allows that:
+        // https://github.com/diffblue/cbmc/issues/6692
+        let (msg, reach_stmt) = if tcx.queries.get_check_assertion_reachability() {
+            // Generate a unique ID for the assert
+            let assert_id = tcx.next_check_id();
+            // Add this ID as a prefix to the assert message so that it can be
+            // easily paired with the reachability check
+            let msg = GotocCtx::add_prefix_to_msg(&msg, &assert_id);
+            let reach_msg = GotocCtx::reachability_check_message(&assert_id);
+            // inject a reachability (cover) check to the current location
+            (msg, tcx.codegen_cover_loc(&reach_msg, span))
+        } else {
+            (msg, Stmt::skip(caller_loc))
+        };
+
+        // Since `cond` might have side effects, assign it to a temporary
+        // variable so that it's evaluated once, then assert and assume it
+        let tmp = tcx.gen_temp_variable(cond.typ().clone(), caller_loc).to_expr();
+        Stmt::block(
+            vec![
+                reach_stmt,
+                Stmt::decl(tmp.clone(), Some(cond), caller_loc),
+                tcx.codegen_assert(tmp.clone(), PropertyClass::Assertion, &msg, caller_loc),
+                Stmt::assume(tmp, caller_loc),
+                Stmt::goto(tcx.current_fn().find_label(&target), caller_loc),
+            ],
+            caller_loc,
+        )
+    }
+}
+
 struct Nondet;
 
 impl<'tcx> GotocHook<'tcx> for Nondet {
@@ -394,6 +497,8 @@ pub fn fn_hooks<'tcx>() -> GotocHooks<'tcx> {
             Rc::new(Panic),
             Rc::new(Assume),
             Rc::new(Assert),
+            Rc::new(Precondition),
+            Rc::new(Postcondition),
             Rc::new(ExpectFail),
             Rc::new(Nondet),
             Rc::new(PtrRead),

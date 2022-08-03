@@ -127,3 +127,11 @@ pub fn panic(message: &'static str) -> ! {
 
 /// Kani proc macros must be in a separate crate
 pub use kani_macros::*;
+
+#[inline(never)]
+#[rustc_diagnostic_item = "KaniPrecondition"]
+pub fn precondition(_cond: bool, _msg: &'static str) {}
+
+#[inline(never)]
+#[rustc_diagnostic_item = "KaniPostcondition"]
+pub fn postcondition(_cond: bool, _msg: &'static str) {}

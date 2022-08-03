@@ -5,11 +5,11 @@
 
 use crate::codegen_cprover_gotoc::codegen::PropertyClass;
 use crate::codegen_cprover_gotoc::GotocCtx;
-use cbmc::goto_program::{Expr, Stmt, Symbol};
+use cbmc::goto_program::{Contract, Expr, Stmt, Symbol, Type};
 use cbmc::InternString;
 use kani_metadata::HarnessMetadata;
 use rustc_ast::ast;
-use rustc_ast::{Attribute, LitKind};
+use rustc_ast::{Attribute, LitKind, MetaItem, MetaItemKind};
 use rustc_middle::mir::{HasLocalDecls, Local};
 use rustc_middle::ty::{self, Instance};
 use std::collections::BTreeMap;
@@ -102,6 +102,24 @@ impl<'tcx> GotocCtx<'tcx> {
             self.handle_kanitool_attributes();
         }
         self.reset_current_fn();
+    }
+
+    pub fn codegen_contract(&mut self, _sym: &MetaItem) {
+        let fn_contract = Contract::function_contract(vec![], vec![], vec![]);
+        let mir = self.current_fn().mir();
+        let name = format!("contract::{}", self.current_fn().name());
+        let base_name = name.clone();
+        // let fn_type = 
+        let fntyp = Type::empty();
+        let loc = self.codegen_span(&mir.span);
+        let sym = Symbol::contract(name, base_name, fntyp, fn_contract, loc);
+        // name: T,
+        // base_name: U,
+        // typ: Type,
+        // contract: Contract,
+        // loc: Location,
+        // let contract = Symbol::contract()
+        self.symbol_table.insert(sym);
     }
 
     /// MIR functions have a `spread_arg` field that specifies whether the
@@ -273,6 +291,7 @@ impl<'tcx> GotocCtx<'tcx> {
         for attr in other_attributes.iter() {
             match attr.0.as_str() {
                 "unwind" => self.handle_kanitool_unwind(attr.1, &mut harness),
+                "assigns" => self.handle_kanitool_assigns(attr.1, &mut harness),
                 _ => {
                     self.tcx.sess.span_err(
                         attr.1.span,
@@ -298,6 +317,18 @@ impl<'tcx> GotocCtx<'tcx> {
             original_line: loc.line().unwrap().to_string(),
             unwind_value: None,
         }
+    }
+
+    fn handle_kanitool_assigns(&mut self, attr: &Attribute, _harness: &mut HarnessMetadata) {
+        let attr_args = attr.meta_item_list().expect("can't be empty");
+        // Only extracts one expr as argument
+        if attr_args.len() == 1 {
+            let x = attr_args[0].meta_item().expect("has to be a meta item");
+            match x.kind {
+                MetaItemKind::Word => self.codegen_contract(x),
+                _ => {}
+            };
+        };
     }
 
     /// Updates the proof harness with new unwind value

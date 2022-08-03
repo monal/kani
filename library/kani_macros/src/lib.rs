@@ -9,8 +9,9 @@
 //   RUSTFLAGS="-Zcrate-attr=feature(register_tool) -Zcrate-attr=register_tool(kanitool)"
 
 // proc_macro::quote is nightly-only, so we'll cobble things together instead
+#![feature(proc_macro)]
 use proc_macro::TokenStream;
-mod contract;
+pub mod contract;
 use contract::ContractAttributes;
 use proc_macro2::{Ident, Span};
 use uuid::Uuid;
@@ -78,11 +79,31 @@ pub fn unwind(attr: TokenStream, item: TokenStream) -> TokenStream {
     result
 }
 
-/// The attribute '#[kani::requires(arg)]' defines a function contract clause for
-/// setting the precondition of a function.
-/// arg - Takes in a boolean expression that represents the precondition.
+#[cfg(not(kani))]
+#[proc_macro_attribute]
+/// Ignores #[kani::requires(arg)] when config is not Kani
+pub fn requires(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    // When the config is not kani, we should leave the function alone
+    item
+}
+
 #[cfg(kani)]
 #[proc_macro_attribute]
+/// If config is Kani, `#[kani::requires(arg)]` attaches a precondition to the function.
+/// arg - Takes in a boolean expression that represents the precondition.
+/// Preconditions are treated as part of the "contract" of a function.
+/// Depending on the context, it is either asserted (or checked) by Kani to ensure that the function respects its contract, 
+///     or assumed when a function is replaced by its contract.
+/// #[kani::requires(arg)]
+/// ...
+/// fn foo {...} ...
+///     gets translated to 
+/// fn foo {
+///     kani::precondition(arg);
+///     fn foo_<uuid> { //...body of the function... }
+///     let ret = foo(...// function args);
+///     ret
+/// }
 pub fn requires(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Parse 'arg'
     let parsed_attr = syn::parse_macro_input!(attr as syn::Expr);
@@ -115,7 +136,7 @@ pub fn requires(attr: TokenStream, item: TokenStream) -> TokenStream {
     quote::quote! {
         #other
         #fn_vis #fn_sig {
-            kani::precondition(#parsed_attr);
+            kani::precondition(#parsed_attr, "pre");
             #pre
             #inner_sig {
                 #(#body_stmts)*
@@ -127,6 +148,14 @@ pub fn requires(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
     .into()
 }
+
+#[cfg(not(kani))]
+#[proc_macro_attribute]
+pub fn ensures(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    // When the config is not kani, we should leave the function alone
+    item
+}
+
 
 /// The attribute '#[kani::requires(arg)]' defines a function contract clause for
 /// setting the postcondition of a function.
@@ -170,10 +199,37 @@ pub fn ensures(attr: TokenStream, item: TokenStream) -> TokenStream {
                 #(#body_stmts)*
             }
             let ret = #inner_sig_ident(#(#fn_args)*);
-            kani::postcondition(#parsed_attr);
+            kani::postcondition(#parsed_attr, "post");
             #post
             ret
         }
+    }
+    .into()
+}
+
+#[cfg(not(kani))]
+#[proc_macro_attribute]
+pub fn assigns(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    // When the config is not kani, we should leave the function alone
+    item
+}
+
+
+/// The attribute '#[kani::requires(arg)]' defines a function contract clause for
+/// setting the postcondition of a function.
+/// arg - Takes in a boolean expression that represents the postcondition.
+#[cfg(kani)]
+#[proc_macro_attribute]
+pub fn assigns(attr: TokenStream, item: TokenStream) -> TokenStream {
+    // Parse 'arg'
+    let parsed_attr = syn::parse_macro_input!(attr as syn::Expr);
+
+    // Parse 'item' and extract out the function and the remaining attributes.
+    let parsed_item = syn::parse_macro_input!(item as syn::ItemFn);
+
+    quote::quote! {
+        #[kanitool::assigns(#parsed_attr)]
+        #parsed_item
     }
     .into()
 }
