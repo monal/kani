@@ -10,6 +10,10 @@
 
 // proc_macro::quote is nightly-only, so we'll cobble things together instead
 use proc_macro::TokenStream;
+mod contract;
+use contract::ContractAttributes;
+use proc_macro2::{Ident, Span};
+use uuid::Uuid;
 
 #[cfg(all(not(kani), not(test)))]
 #[proc_macro_attribute]
@@ -72,4 +76,104 @@ pub fn unwind(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     result.extend(item);
     result
+}
+
+/// The attribute '#[kani::requires(arg)]' defines a function contract clause for
+/// setting the precondition of a function.
+/// arg - Takes in a boolean expression that represents the precondition.
+#[cfg(kani)]
+#[proc_macro_attribute]
+pub fn requires(attr: TokenStream, item: TokenStream) -> TokenStream {
+    // Parse 'arg'
+    let parsed_attr = syn::parse_macro_input!(attr as syn::Expr);
+
+    // Parse 'item' and extract out the function and the remaining attributes.
+    let parsed_item = syn::parse_macro_input!(item as syn::ItemFn);
+    let other_attributes = parsed_item.attrs;
+    let contract_attributes = ContractAttributes::new(other_attributes);
+    let pre = contract_attributes.extract_preconditions();
+    let post = contract_attributes.extract_postconditions();
+    let other = contract_attributes.extract_other_attributes();
+    let fn_vis = parsed_item.vis;
+    let fn_sig = parsed_item.sig;
+    let body_stmts = parsed_item.block.stmts;
+    let mut inner_sig = fn_sig.clone();
+    let new_fn_name =
+        format!("{}_{}", fn_sig.ident.clone().to_string(), Uuid::new_v4()).replace("-", "_");
+    let inner_sig_ident = Ident::new(new_fn_name.as_str(), Span::call_site());
+    inner_sig.ident = inner_sig_ident.clone();
+    let fn_args: Vec<syn::Pat> = fn_sig
+        .clone()
+        .inputs
+        .iter()
+        .filter_map(|x| match x {
+            syn::FnArg::Typed(syn::PatType { pat, ty, .. }) => Some(*pat.clone()),
+            _ => None,
+        })
+        .collect();
+
+    quote::quote! {
+        #other
+        #fn_vis #fn_sig {
+            kani::precondition(#parsed_attr);
+            #pre
+            #inner_sig {
+                #(#body_stmts)*
+            }
+            let ret = #inner_sig_ident(#(#fn_args)*);
+            #post
+            ret
+        }
+    }
+    .into()
+}
+
+/// The attribute '#[kani::requires(arg)]' defines a function contract clause for
+/// setting the postcondition of a function.
+/// arg - Takes in a boolean expression that represents the postcondition.
+#[cfg(kani)]
+#[proc_macro_attribute]
+pub fn ensures(attr: TokenStream, item: TokenStream) -> TokenStream {
+    // Parse 'arg'
+    let parsed_attr = syn::parse_macro_input!(attr as syn::Expr);
+
+    // Parse 'item' and extract out the function and the remaining attributes.
+    let parsed_item = syn::parse_macro_input!(item as syn::ItemFn);
+    let other_attributes = parsed_item.attrs;
+    let contract_attributes = ContractAttributes::new(other_attributes);
+    let pre = contract_attributes.extract_preconditions();
+    let post = contract_attributes.extract_postconditions();
+    let other = contract_attributes.extract_other_attributes();
+    let fn_vis = parsed_item.vis;
+    let fn_sig = parsed_item.sig;
+    let body_stmts = parsed_item.block.stmts;
+    let mut inner_sig = fn_sig.clone();
+    let new_fn_name =
+        format!("{}_{}", fn_sig.ident.clone().to_string(), Uuid::new_v4()).replace("-", "_");
+    let inner_sig_ident = Ident::new(new_fn_name.as_str(), Span::call_site());
+    inner_sig.ident = inner_sig_ident.clone();
+    let fn_args: Vec<syn::Pat> = fn_sig
+        .clone()
+        .inputs
+        .iter()
+        .filter_map(|x| match x {
+            syn::FnArg::Typed(syn::PatType { pat, ty, .. }) => Some(*pat.clone()),
+            _ => None,
+        })
+        .collect();
+
+    quote::quote! {
+        #other
+        #fn_vis #fn_sig {
+            #pre
+            #inner_sig {
+                #(#body_stmts)*
+            }
+            let ret = #inner_sig_ident(#(#fn_args)*);
+            kani::postcondition(#parsed_attr);
+            #post
+            ret
+        }
+    }
+    .into()
 }
