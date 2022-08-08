@@ -125,5 +125,24 @@ pub fn panic(message: &'static str) -> ! {
     panic!("{}", message)
 }
 
+/// Creates a preconditon of the specified condition.
+#[inline(never)]
+#[rustc_diagnostic_item = "KaniPrecondition"]
+pub fn precondition(_cond: bool) {}
+
+/// Creates a postcondition of the specified condition.
+#[inline(never)]
+#[rustc_diagnostic_item = "KaniPostcondition"]
+pub fn postcondition(_cond: bool) {}
+
+/// Handles the function body and either
+///     replaces it to a non-det value or not
+///     depending on "--replace-with-contracts" flag value.
+#[inline(never)]
+#[rustc_diagnostic_item = "KaniReplaceFunctionBody"]
+pub fn replace_function_body() -> bool {
+    unimplemented!("Kani replace function body")
+}
+
 /// Kani proc macros must be in a separate crate
 pub use kani_macros::*;

@@ -5,11 +5,11 @@
 
 use crate::codegen_cprover_gotoc::codegen::PropertyClass;
 use crate::codegen_cprover_gotoc::GotocCtx;
-use cbmc::goto_program::{Expr, Stmt, Symbol};
+use cbmc::goto_program::{Contract, Expr, Parameter, Spec, Stmt, Symbol, Type};
 use cbmc::InternString;
 use kani_metadata::HarnessMetadata;
 use rustc_ast::ast;
-use rustc_ast::{Attribute, LitKind};
+use rustc_ast::{Attribute, LitKind, NestedMetaItem};
 use rustc_middle::mir::{HasLocalDecls, Local};
 use rustc_middle::ty::{self, Instance};
 use std::collections::BTreeMap;
@@ -63,6 +63,114 @@ impl<'tcx> GotocCtx<'tcx> {
                 self.current_fn_mut().push_onto_block(Stmt::decl(sym_e, None, loc));
             }
         });
+    }
+
+    pub fn codegen_contract(&mut self, args: Vec<NestedMetaItem>) {
+        let mir = self.current_fn().mir();
+        let loc = self.codegen_span(&mir.span);
+        let sig = self.current_fn().sig();
+        let sig =
+            self.tcx.normalize_erasing_late_bound_regions(ty::ParamEnv::reveal_all(), sig.unwrap());
+        let in_params: Vec<Expr> = sig
+            .inputs()
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let lc = Local::from_usize(i + 1);
+                let ident = self.codegen_var_name(&lc);
+                let t_typ: Type = self.codegen_ty(*t);
+                Expr::symbol_expression(ident, t_typ)
+            })
+            .collect();
+        let out_params = {
+            let out = sig.output();
+            let lc = Local::from_usize(0);
+            let ident = self.codegen_var_name(&lc);
+            let t_typ: Type = self.codegen_ty(out);
+            Expr::symbol_expression(ident, t_typ)
+        };
+        let mut params = in_params;
+        params.insert(0, out_params);
+        let final_params = params;
+        let spec_true = Spec::new(final_params.clone(), Expr::bool_true(), loc);
+
+        // Get the function signature from MIR, _before_ we untuple
+        let typ = {
+            let sig = self.current_fn().sig();
+            let sig = self
+                .tcx
+                .normalize_erasing_late_bound_regions(ty::ParamEnv::reveal_all(), sig.unwrap());
+            let mut params: Vec<Parameter> = sig
+                .inputs()
+                .iter()
+                .enumerate()
+                .filter_map(|(i, t)| {
+                    if self.ignore_var_ty(*t) {
+                        None
+                    } else {
+                        let lc = Local::from_usize(i + 1);
+                        let mut ident = self.codegen_var_name(&lc);
+
+                        // `spread_arg` indicates that the last argument is tupled
+                        // at the LLVM/codegen level, so we need to declare the indivual
+                        // components as parameters with a special naming convention
+                        // so that we can "retuple" them in the function prelude.
+                        // See: compiler/rustc_codegen_llvm/src/gotoc/mod.rs:codegen_function_prelude
+                        if let Some(spread) = self.current_fn().mir().spread_arg {
+                            if lc.index() >= spread.index() {
+                                let (name, _) = self.codegen_spread_arg_name(&lc);
+                                ident = name;
+                            }
+                        }
+                        Some(
+                            self.codegen_ty(*t)
+                                .as_parameter(Some(ident.clone().into()), Some(ident.into())),
+                        )
+                    }
+                })
+                .collect();
+            if let ty::InstanceDef::VtableShim(..) = self.current_fn().instance().def {
+                if let Some(self_param) = params.first() {
+                    let ident = self_param.identifier();
+                    let ty = self_param.typ().clone();
+                    params[0] = ty.clone().to_pointer().as_parameter(ident, ident);
+                }
+            }
+            if sig.c_variadic {
+                Type::variadic_code(params, self.codegen_ty(sig.output()))
+            } else {
+                Type::code(params, self.codegen_ty(sig.output()))
+            }
+        };
+
+        let transformed_args = args
+            .iter()
+            .map(|a| {
+                let var = a.meta_item().unwrap().path.segments[0].ident.to_string();
+                let ldecls = mir.local_decls();
+                let mut var_name = var.clone();
+                ldecls.indices().for_each(|lc| {
+                    let base_name = self.codegen_var_base_name(&lc);
+                    let name = self.codegen_var_name(&lc);
+                    if base_name == var {
+                        var_name = name.clone();
+                    };
+                });
+                let var_sym = self.symbol_table.lookup(var_name).unwrap();
+                let var_typ = var_sym.typ.clone();
+                Spec::new(final_params.clone(), Expr::symbol_expression(var, var_typ), loc)
+            })
+            .collect();
+        let fn_contract = Contract::function_contract(
+            vec![spec_true.clone()],
+            vec![spec_true.clone()],
+            transformed_args,
+        );
+
+        let name = format!("contract::{}", self.current_fn().name());
+        let base_name = name.clone();
+        let sym = Symbol::contract(name, base_name, typ, fn_contract, loc);
+        self.symbol_table.insert(sym);
     }
 
     pub fn codegen_function(&mut self, instance: Instance<'tcx>) {
@@ -273,6 +381,7 @@ impl<'tcx> GotocCtx<'tcx> {
         for attr in other_attributes.iter() {
             match attr.0.as_str() {
                 "unwind" => self.handle_kanitool_unwind(attr.1, &mut harness),
+                "assigns" => self.handle_kanitool_assigns(attr.1),
                 _ => {
                     self.tcx.sess.span_err(
                         attr.1.span,
@@ -298,6 +407,11 @@ impl<'tcx> GotocCtx<'tcx> {
             original_line: loc.line().unwrap().to_string(),
             unwind_value: None,
         }
+    }
+
+    fn handle_kanitool_assigns(&mut self, attr: &Attribute) {
+        let attr_args = attr.meta_item_list().unwrap();
+        self.codegen_contract(attr_args);
     }
 
     /// Updates the proof harness with new unwind value

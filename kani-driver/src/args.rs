@@ -156,6 +156,13 @@ pub struct KaniArgs {
                       "performs additional processing to produce valid C code "
                       "at the cost of some readability")
         */
+    /// Enforce (or check) if functions satisfy their contracts.
+    #[structopt(long, hidden_short_help(true), requires("enable-unstable"))]
+    pub enforce_contracts: bool,
+
+    /// Replace functions with their contracts.
+    #[structopt(long, hidden_short_help(true), requires("enable-unstable"))]
+    pub replace_with_contracts: bool,
 }
 
 impl KaniArgs {

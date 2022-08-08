@@ -177,6 +177,47 @@ impl<'tcx> GotocHook<'tcx> for Assert {
     }
 }
 
+struct ReplaceFunctionBody;
+
+impl<'tcx> GotocHook<'tcx> for ReplaceFunctionBody {
+    fn hook_applies(&self, tcx: TyCtxt<'tcx>, instance: Instance<'tcx>) -> bool {
+        matches_function(tcx, instance, "KaniReplaceFunctionBody")
+    }
+
+    fn handle(
+        &self,
+        tcx: &mut GotocCtx<'tcx>,
+        _instance: Instance<'tcx>,
+        fargs: Vec<Expr>,
+        assign_to: Place<'tcx>,
+        target: Option<BasicBlock>,
+        span: Option<Span>,
+    ) -> Stmt {
+        assert_eq!(fargs.len(), 0);
+        let loc = tcx.codegen_span_option(span);
+        let target = target.unwrap();
+        let pe = unwrap_or_return_codegen_unimplemented_stmt!(tcx, tcx.codegen_place(&assign_to))
+            .goto_expr;
+        if tcx.queries.get_replace_with_contracts() {
+            Stmt::block(
+                vec![
+                    pe.assign(Expr::c_true(), loc),
+                    Stmt::goto(tcx.current_fn().find_label(&target), loc),
+                ],
+                loc,
+            )
+        } else {
+            Stmt::block(
+                vec![
+                    pe.assign(Expr::c_false(), loc),
+                    Stmt::goto(tcx.current_fn().find_label(&target), loc),
+                ],
+                loc,
+            )
+        }
+    }
+}
+
 struct Nondet;
 
 impl<'tcx> GotocHook<'tcx> for Nondet {
@@ -242,6 +283,91 @@ impl<'tcx> GotocHook<'tcx> for Panic {
         span: Option<Span>,
     ) -> Stmt {
         tcx.codegen_panic(span, fargs)
+    }
+}
+
+struct Precondition;
+impl<'tcx> GotocHook<'tcx> for Precondition {
+    fn hook_applies(&self, tcx: TyCtxt<'tcx>, instance: Instance<'tcx>) -> bool {
+        matches_function(tcx, instance, "KaniPrecondition")
+    }
+
+    fn handle(
+        &self,
+        tcx: &mut GotocCtx<'tcx>,
+        _instance: Instance<'tcx>,
+        mut fargs: Vec<Expr>,
+        _assign_to: Place<'tcx>,
+        target: Option<BasicBlock>,
+        span: Option<Span>,
+    ) -> Stmt {
+        assert_eq!(fargs.len(), 1);
+        let cond = fargs.remove(0).cast_to(Type::bool());
+        let target = target.unwrap();
+        let loc = tcx.codegen_span_option(span);
+        if tcx.queries.get_enforce_contracts() {
+            Stmt::block(
+                vec![
+                    Stmt::assume(cond, loc),
+                    Stmt::goto(tcx.current_fn().find_label(&target), loc),
+                ],
+                loc,
+            )
+        } else if tcx.queries.get_replace_with_contracts() {
+            let tmp = tcx.gen_temp_variable(cond.typ().clone(), loc).to_expr();
+            Stmt::block(
+                vec![
+                    Stmt::decl(tmp.clone(), Some(cond), loc),
+                    tcx.codegen_assert(tmp.clone(), PropertyClass::Assertion, "precondition", loc),
+                ],
+                loc,
+            )
+        } else {
+            Stmt::block(vec![], loc)
+        }
+    }
+}
+
+struct Postcondition;
+impl<'tcx> GotocHook<'tcx> for Postcondition {
+    fn hook_applies(&self, tcx: TyCtxt<'tcx>, instance: Instance<'tcx>) -> bool {
+        matches_function(tcx, instance, "KaniPostcondition")
+    }
+
+    fn handle(
+        &self,
+        tcx: &mut GotocCtx<'tcx>,
+        _instance: Instance<'tcx>,
+        mut fargs: Vec<Expr>,
+        _assign_to: Place<'tcx>,
+        target: Option<BasicBlock>,
+        span: Option<Span>,
+    ) -> Stmt {
+        assert_eq!(fargs.len(), 1);
+        let cond = fargs.remove(0).cast_to(Type::bool());
+        let target = target.unwrap();
+        let loc = tcx.codegen_span_option(span);
+
+        if tcx.queries.get_enforce_contracts() {
+            let tmp = tcx.gen_temp_variable(cond.typ().clone(), loc).to_expr();
+            Stmt::block(
+                vec![
+                    Stmt::decl(tmp.clone(), Some(cond), loc),
+                    tcx.codegen_assert(tmp.clone(), PropertyClass::Assertion, "postcondition", loc),
+                ],
+                loc,
+            )
+        } else if tcx.queries.get_replace_with_contracts() {
+            Stmt::block(
+                vec![
+                    Stmt::assume(cond, loc),
+                    Stmt::goto(tcx.current_fn().find_label(&target), loc),
+                ],
+                loc,
+            )
+        } else {
+            Stmt::block(vec![], loc)
+        }
     }
 }
 
@@ -394,6 +520,9 @@ pub fn fn_hooks<'tcx>() -> GotocHooks<'tcx> {
             Rc::new(Panic),
             Rc::new(Assume),
             Rc::new(Assert),
+            Rc::new(ReplaceFunctionBody),
+            Rc::new(Precondition),
+            Rc::new(Postcondition),
             Rc::new(ExpectFail),
             Rc::new(Nondet),
             Rc::new(PtrRead),
