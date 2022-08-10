@@ -156,9 +156,9 @@ impl<'tcx> GotocCtx<'tcx> {
                         var_name = name.clone();
                     };
                 });
-                let var_sym = self.symbol_table.lookup(var_name).unwrap();
+                let var_sym = self.symbol_table.lookup(var_name.clone()).unwrap();
                 let var_typ = var_sym.typ.clone();
-                Spec::new(final_params.clone(), Expr::symbol_expression(var, var_typ), loc)
+                Spec::new(final_params.clone(), Expr::symbol_expression(var_name, var_typ), loc)
             })
             .collect();
         let fn_contract = Contract::function_contract(
