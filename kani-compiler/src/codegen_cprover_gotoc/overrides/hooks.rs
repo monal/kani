@@ -314,6 +314,7 @@ impl<'tcx> GotocHook<'tcx> for Precondition {
                 loc,
             )
         } else if tcx.queries.get_replace_with_contracts() {
+            // Convert precondition to "assume" if a function contract is being checked.
             let tmp = tcx.gen_temp_variable(cond.typ().clone(), loc).to_expr();
             Stmt::block(
                 vec![
@@ -323,7 +324,7 @@ impl<'tcx> GotocHook<'tcx> for Precondition {
                 loc,
             )
         } else {
-            Stmt::block(vec![], loc)
+            Stmt::block(vec![Stmt::goto(tcx.current_fn().find_label(&target), loc),], loc)
         }
     }
 }
@@ -367,7 +368,7 @@ impl<'tcx> GotocHook<'tcx> for Postcondition {
                 loc,
             )
         } else {
-            Stmt::block(vec![Stmt::goto(tcx.current_fn().find_label(&target), loc)], loc)
+            Stmt::block(vec![Stmt::goto(tcx.current_fn().find_label(&target), loc),], loc)
         }
     }
 }
