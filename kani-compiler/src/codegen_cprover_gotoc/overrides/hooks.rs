@@ -354,6 +354,7 @@ impl<'tcx> GotocHook<'tcx> for Postcondition {
                 vec![
                     Stmt::decl(tmp.clone(), Some(cond), loc),
                     tcx.codegen_assert(tmp.clone(), PropertyClass::Assertion, "postcondition", loc),
+                    Stmt::goto(tcx.current_fn().find_label(&target), loc),
                 ],
                 loc,
             )
@@ -366,7 +367,7 @@ impl<'tcx> GotocHook<'tcx> for Postcondition {
                 loc,
             )
         } else {
-            Stmt::block(vec![], loc)
+            Stmt::block(vec![Stmt::goto(tcx.current_fn().find_label(&target), loc)], loc)
         }
     }
 }
