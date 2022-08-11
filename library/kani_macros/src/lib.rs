@@ -263,7 +263,11 @@ pub fn ensures(attr: TokenStream, item: TokenStream) -> TokenStream {
         #fn_vis #fn_sig {
             #pre
             #inner_fn
-            let ret = kani::replace_function_body(#inner_ident, #(#args)*);
+            let ret = if kani::replace_function_body() {
+                kani::any()
+            } else {
+                #inner_ident(#(#args,)*)
+            };
             kani::postcondition(#parsed_attr);
             #post
             ret
@@ -280,14 +284,14 @@ pub fn assigns(_attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// The attribute '#[kani::assigns(arg1, arg2, ...)]' defines the write set of the function.
-/// arg - Zero or more comma-separated “targets” is either a variable, a dereference expression,
+/// arg - Zero or more comcma-separated “targets” is either a variable, a dereference expression,
 ///     a member expression, an "object", a slice expression.
 #[cfg(kani)]
 #[proc_macro_attribute]
 pub fn assigns(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Parse 'arg'
-    let parsed_attr: Vec<Ident> =
-        parse_macro_input!(attr with punctuated::Punctuated::<Ident, Token![,]>::parse_terminated)
+    let parsed_attr: Vec<syn::Expr> =
+        parse_macro_input!(attr with punctuated::Punctuated::<syn::Expr, Token![,]>::parse_terminated)
             .into_iter()
             .collect();
 
