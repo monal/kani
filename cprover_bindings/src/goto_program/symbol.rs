@@ -129,16 +129,24 @@ impl Symbol {
         )
     }
 
-    pub fn contract<T: Into<InternedString>, U: Into<InternedString>>(
+    pub fn contract<T: Into<InternedString>>(
         name: T,
+<<<<<<< HEAD
         _base_name: U,
+=======
+>>>>>>> 0bca0ae49b8529334032f737450bc43fdd2a6ebb
         typ: Type,
         contract: Contract,
         loc: Location,
     ) -> Symbol {
         let name = name.into();
+<<<<<<< HEAD
         // Both base name and pretty name contain the name of the function that the contract is written for.
         let base_name: InternedString = name.into();
+=======
+        // Both base name and pretty name have the same name as the contract.
+        let base_name = name;
+>>>>>>> 0bca0ae49b8529334032f737450bc43fdd2a6ebb
         let pretty_name = name;
         Symbol::new(
             name,
